@@ -1,0 +1,102 @@
+from dotenv import load_dotenv
+import os
+import requests
+from urllib.parse import quote_plus
+
+from snapshot_operations import poll_snapshot_status,download_snapshot
+
+load_dotenv()
+
+def _make_api_request(url,**kwargs):
+    api_key=os.getenv('BRIGHT_API_KEY')
+
+    headers={
+        "Authorization":f"Bearer {api_key}",
+        "Content-Type":"application/json"
+    }
+
+    try:
+        res=requests.post(url,headers=headers,**kwargs)
+        res.raise_for_status()
+        return res.json()
+    except requests.RequestException as e:
+        print(f"API request failed: {e}")
+        return None
+    except Exception as e:
+        print(f'Unknown error:{e}')
+        return None
+
+def serp_search(query,engine="google"):
+    if engine=="google":
+        base_url="https://www.google.com/search"
+    elif engine=="bing":
+        base_url="https://www.bing.com/search"
+    else:
+        raise ValueError(f"Unknow engine {engine}")
+    url="https://api.brightdata.com/request"
+    payload={
+        "zone":'ai_agent',
+        "url":f'{base_url}?q={quote_plus(query)}&brd_json=1',
+        "format":"raw"
+    }
+    full_response=_make_api_request(url,json=payload)
+    if not full_response:
+        return None
+    extracted_data={
+        "knowledge":full_response.get("knowledge",{}),
+        "organic":full_response.get('organic',[])
+    }
+    return extracted_data
+
+def _trigger_and_download_snapshot(trigger_url,params,data,operation_name="operation"):
+    trigger_result=_make_api_request(trigger_url,params=params,json=data)
+    if not trigger_result:
+        return None
+    snapshot_id=trigger_result.get("snapshot_id")
+    if not snapshot_id:
+        return None
+
+    if not poll_snapshot_status(snapshot_id):
+        return None
+
+    raw_data=download_snapshot(snapshot_id)
+    return raw_data
+
+    
+
+def reddit_search_api(keyword,date="All time",sort_by="Hot",num_of_post=75):
+    trigger_url="https://api.brightdata.com/datasets/v3/scrape"
+    params={
+        "dataset_id":"gd_lvz8ah06191smkebj4",
+        "include_errors":"true",
+        "type":"discover_new",
+        "discover_by":"keyword"
+    }
+
+    data=[
+        {
+            "keyword":keyword,
+            "date":date,
+            "sort_by":sort_by,
+            "num_of_posts":num_of_post
+        }
+    ]
+    raw_data=_trigger_and_download_snapshot(trigger_url,params,data,operation_name="reddit")
+
+    if not raw_data:
+        return None
+
+    parsed_data=[]
+
+    for post in raw_data:
+        parsed_post={
+            "title":post.get("title"),
+            "url":post.get('url')
+        }
+        parsed_data.append(parsed_post)
+
+    return {"parsed_posts":parsed_data,"total_found":len(parsed_data)}
+
+
+
+
