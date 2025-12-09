@@ -1,3 +1,5 @@
+from prompts import get_reddit_url_analysis_messages
+from prompts import get_reddit_analysis_messages
 from dotenv import load_dotenv
 from typing import Annotated, List
 from langgraph.graph import StateGraph, START,END
@@ -6,9 +8,13 @@ from langchain.chat_models import init_chat_model
 from typing_extensions import TypedDict
 from pydantic import BaseModel,Field
 from web_operation import serp_search,reddit_search_api
+from prompts import *
 load_dotenv()
 
 llm =init_chat_model(model='gpt-4o')
+
+class RedditURLAnalysis(BaseModel):
+    selected_urls:List[str]=Field(description='List of Reddit URLs that contain valuable information for answering the users questions')
 
 class State(TypedDict):
     messages:Annotated[list,add_messages]
@@ -38,13 +44,33 @@ def bing_search(state:State):
 
 def reddit_search(state:State):
     user_question=state.get("user_question","")
-    print(f"Searching Reddit for: {user_question}")
+    # print(f"Searching Reddit for: {user_question}")
     reddit_results=reddit_search_api(user_question)
-    print(reddit_results)
+    # print(reddit_results)
     return {"reddit_results":reddit_results}
 
 def analyze_reddit_posts(state:State):
-    return {"selected_reddit_urls":[]}
+    user_questions=state.get("user_question","")
+    reddit_results=state.get("reddit_results","")
+
+    if not reddit_results:
+        return {"selected_reddit_urls":[]}
+
+    structured_llm=llm.with_structured_output(RedditURLAnalysis)
+    messages=get_reddit_url_analysis_messages(user_questions,reddit_results)
+
+    try:
+        analysis=structured_llm.invoke(messages)
+        selected_urls=analysis.selected_urls
+
+        for i,url in enumerate(selected_urls):
+            print(f" {i}. {url}")
+
+    except Exception as e:
+        print(e)
+        selected_urls=[]
+
+    return {"selected_reddit_urls":selected_urls}
 
 def analyze_google_results(state:State):
     return {"google_analysis":""}
